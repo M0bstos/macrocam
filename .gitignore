@@ -1,0 +1,17 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+env/
+.env
+
+# build / cache
+build/
+dist/
+.pytest_cache/
+
+# outputs
+out/
+
+# rough work
+docs/
