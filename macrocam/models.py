@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -85,3 +86,10 @@ class CacheEntry:
 
     def __post_init__(self) -> None:
         _require_non_empty(self.image_hash, "image_hash")
+        if not self.created_at or not self.created_at.strip():
+            self.created_at = datetime.now(timezone.utc).isoformat()
+        else:
+            try:
+                datetime.fromisoformat(self.created_at.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError("created_at must be ISO-8601") from exc
