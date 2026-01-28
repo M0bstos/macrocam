@@ -14,7 +14,11 @@ def sha256_bytes(data: bytes) -> str:
 
 def sha256_file(path: str | Path) -> str:
     file_path = Path(path)
-    return sha256_bytes(file_path.read_bytes())
+    hasher = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def is_supported_image(path: str | Path) -> bool:
