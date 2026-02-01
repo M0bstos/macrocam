@@ -11,6 +11,9 @@ dist/
 .pytest_cache/
 tmp/
 
+#data
+data/
+
 # outputs
 out/
 
