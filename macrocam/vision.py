@@ -132,11 +132,11 @@ def _extract_text_from_gemini_response(payload: dict[str, Any]) -> str:
     return "\n".join(texts).strip()
 
 
-def analyze_image(
+def analyze_image_json(
     image_bytes: bytes,
     mime_type: str,
     config: VisionConfig | None = None,
-) -> VisionResult:
+) -> dict[str, Any]:
     if not mime_type:
         raise ValueError("mime_type is required")
 
@@ -182,4 +182,13 @@ def analyze_image(
             retry_text = _extract_text_from_gemini_response(retry.json())
             raw = parse_vision_json_with_retry(primary_text, retry_text)
 
+    return raw
+
+
+def analyze_image(
+    image_bytes: bytes,
+    mime_type: str,
+    config: VisionConfig | None = None,
+) -> VisionResult:
+    raw = analyze_image_json(image_bytes=image_bytes, mime_type=mime_type, config=config)
     return normalize_candidates(raw)

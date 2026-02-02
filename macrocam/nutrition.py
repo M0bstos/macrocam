@@ -5,7 +5,6 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Iterable
 
@@ -148,18 +147,32 @@ def suggest_fallback_queries(
     return cleaned[:5]
 
 
-def _score_description(query: str, description: str, data_type: str) -> float:
+def _score_description(
+    query_norm: str,
+    query_tokens: set[str],
+    description: str,
+    data_type: str,
+) -> float:
     if not description:
         return 0.0
-    query_norm = _normalize_text(query)
     desc_norm = _normalize_text(description)
     if not query_norm or not desc_norm:
         return 0.0
-    ratio = SequenceMatcher(None, query_norm, desc_norm).ratio()
-    if query_norm in desc_norm:
-        ratio += 0.35
+
     bonus = DATA_TYPE_BONUS.get(data_type, 0.0)
-    return ratio + bonus
+    if query_norm == desc_norm:
+        return 2.0 + bonus
+    if query_norm in desc_norm:
+        return 1.2 + bonus
+
+    desc_tokens = set(desc_norm.split())
+    if not desc_tokens:
+        return 0.0
+    overlap = len(query_tokens.intersection(desc_tokens))
+    if overlap == 0:
+        return 0.0
+    base = overlap / max(len(query_tokens), 1)
+    return base + bonus
 
 
 def _iter_food_rows(food_path: Path) -> Iterable[dict[str, str]]:
@@ -184,6 +197,11 @@ def search_usda_foods(
     food_path = base_dir / "food.csv"
     prefer = set(prefer_types) if prefer_types is not None else set(PREFERRED_DATA_TYPES)
 
+    query_norm = _normalize_text(query)
+    if not query_norm:
+        raise ValueError("query must be non-empty")
+    query_tokens = set(query_norm.split())
+
     candidates: list[FoodCandidate] = []
     for idx, row in enumerate(_iter_food_rows(food_path)):
         if max_rows is not None and idx >= max_rows:
@@ -194,20 +212,27 @@ def search_usda_foods(
         data_type = (row.get("data_type") or "").strip()
         if prefer and data_type and data_type not in prefer:
             continue
-        score = _score_description(query, description, data_type)
+        score = _score_description(query_norm, query_tokens, description, data_type)
         if score <= 0:
             continue
         fdc_id = str(row.get("fdc_id") or "").strip()
         if not fdc_id:
             continue
-        candidates.append(
-            FoodCandidate(
-                fdc_id=fdc_id,
-                description=description,
-                data_type=data_type,
-                score=score,
-            )
+
+        candidate = FoodCandidate(
+            fdc_id=fdc_id,
+            description=description,
+            data_type=data_type,
+            score=score,
         )
+        if len(candidates) < limit:
+            candidates.append(candidate)
+        else:
+            lowest_index = min(
+                range(len(candidates)), key=lambda idx: candidates[idx].score
+            )
+            if candidate.score > candidates[lowest_index].score:
+                candidates[lowest_index] = candidate
 
     candidates.sort(key=lambda candidate: candidate.score, reverse=True)
     return candidates[:limit]
@@ -222,10 +247,18 @@ def _load_nutrient_index(base_dir: Path) -> dict[str, dict[str, str]]:
             name = (row.get("name") or "").strip()
             if not name:
                 continue
-            lookup[name.lower()] = {
+            entry = {
                 "id": str(row.get("id") or "").strip(),
                 "unit": (row.get("unit_name") or "").strip().upper(),
             }
+            key = name.lower()
+            if key in lookup:
+                existing = lookup[key]
+                if existing.get("unit") == "KCAL":
+                    continue
+                if entry.get("unit") != "KCAL":
+                    continue
+            lookup[key] = entry
     return lookup
 
 
@@ -315,13 +348,15 @@ def lookup_usda_food(
     use_llm_fallback: bool = True,
 ) -> DbMatch:
     base_dir = _resolve_data_dir(data_dir)
-    matches = search_usda_foods(query, base_dir, limit=5, prefer_types=prefer_types)
+    matches = search_usda_foods(query, base_dir, limit=20, prefer_types=prefer_types)
     if not matches:
         if fallback_queries is None and use_llm_fallback:
             fallback_queries = suggest_fallback_queries(query)
         for alt_query in fallback_queries or []:
             matches.extend(
-                search_usda_foods(alt_query, base_dir, limit=5, prefer_types=prefer_types)
+                search_usda_foods(
+                    alt_query, base_dir, limit=20, prefer_types=prefer_types
+                )
             )
     if not matches:
         raise ValueError(f"No USDA matches found for query: {query}")
